@@ -18,12 +18,13 @@ module FluentPluginKinesis
 
     Fluent::Plugin.register_output('kinesis',self)
 
-    config_set_default :include_time_key, true
-    config_set_default :include_tag_key,  true
+    config_set_default :include_time_key, false
+    config_set_default :include_tag_key,  false
 
-    config_param :aws_key_id,   :string, default: nil
-    config_param :aws_sec_key,  :string, default: nil
-    config_param :region,     :string, default: nil
+    config_param :aws_key_id,    :string,  default: nil
+    config_param :aws_sec_key,   :string,  default: nil
+    config_param :region,        :string,  default: nil
+    config_param :kinesis_chunk, :integer, default: 37000
 
     config_param :stream_name,      :string, default: nil
     config_param :random_partition_key, :bool, default: false
@@ -79,35 +80,36 @@ module FluentPluginKinesis
     end
 
     def format(tag, time, record)
-      # XXX: The maximum size of the data blob is 50 kilobytes
-      # http://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecord.html
-      data = {
-        stream_name: @stream_name,
-        data: Base64.encode64(record.to_json),
-        partition_key: get_key(:partition_key,record)
-      }
+      data = record['message'].to_json.to_msgpack
+      return data
+    end
 
-      if @explicit_hash_key or @explicit_hash_key_proc
-        data[:explicit_hash_key] = get_key(:explicit_hash_key,record)
-      end
-
-      data.to_msgpack
+    def package_for_kinesis(arr, stream)
+      random_number = SecureRandom.uuid
+      big_chunk = Base64.strict_encode64('[' + arr.join(",") + ']')
+      kinesis_to_send = { :data => big_chunk, :partition_key => random_number, :stream_name => stream }
+      return kinesis_to_send
     end
 
     def write(chunk)
+      kinesis_chunks = Array.new
+      chunk_size = 2 # we're packing the chunks into a json array - start with '[]'
       chunk.msgpack_each do |data|
-        data_to_put = build_data_to_put(data)
-        if @order_events
-          if @sequence_number_for_ordering
-            data_to_put.update(
-              sequence_number_for_ordering: @sequence_number_for_ordering
-            )
-          end
-          result = @client.put_record(data_to_put)
-          @sequence_number_for_ordering = result[:sequence_number]
+        data_to_put = data
+        len = (data.length+1)
+        if (len + chunk_size) > @kinesis_chunk
+          kinesis_to_send = package_for_kinesis(kinesis_chunks, @stream_name)
+          result = @client.put_record(kinesis_to_send)
+          chunk_size = 0
+          kinesis_chunks = Array.new
         else
-          @client.put_record(data_to_put)
+          kinesis_chunks.push(data)
+          chunk_size += len 
         end
+      end
+      if kinesis_chunks.length > 0
+        kinesis_to_send = package_for_kinesis(kinesis_chunks, @stream_name)
+        result = @client.put_record(kinesis_to_send)
       end
     end
 
