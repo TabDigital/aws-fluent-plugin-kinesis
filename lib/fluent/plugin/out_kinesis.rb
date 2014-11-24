@@ -80,7 +80,7 @@ module FluentPluginKinesis
     end
 
     def format(tag, time, record)
-      data = record['message'].to_json.to_msgpack
+      data = record['message'].to_msgpack
       return data
     end
 
