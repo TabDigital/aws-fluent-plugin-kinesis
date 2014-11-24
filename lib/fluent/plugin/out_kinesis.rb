@@ -44,7 +44,7 @@ module FluentPluginKinesis
         @parallel_mode = true
         if @detach_process
           @use_detach_multi_process_mixin = true
-        end   
+        end
       else
         @parallel_mode = false
       end
@@ -86,16 +86,16 @@ module FluentPluginKinesis
 
     def package_for_kinesis(arr, stream)
       random_number = SecureRandom.uuid
-      big_chunk = Base64.strict_encode64('[' + arr.join(",") + ']')
+      pre_encode = '[' + arr.join(",") + ']'
+      big_chunk = Base64.strict_encode64(pre_encode)
       kinesis_to_send = { :data => big_chunk, :partition_key => random_number, :stream_name => stream }
       return kinesis_to_send
     end
 
     def write(chunk)
       kinesis_chunks = Array.new
-      chunk_size = 2 # we're packing the chunks into a json array - start with '[]'
+      chunk_size = '[]'.length # we're packing the chunks into a json array - start with '[]'
       chunk.msgpack_each do |data|
-        data_to_put = data
         len = (data.length+1)
         if (len + chunk_size) > @kinesis_chunk
           kinesis_to_send = package_for_kinesis(kinesis_chunks, @stream_name)
@@ -104,12 +104,13 @@ module FluentPluginKinesis
           kinesis_chunks = Array.new
         else
           kinesis_chunks.push(data)
-          chunk_size += len 
+          chunk_size += len
         end
       end
       if kinesis_chunks.length > 0
         kinesis_to_send = package_for_kinesis(kinesis_chunks, @stream_name)
         result = @client.put_record(kinesis_to_send)
+        log.info "wrote something", result.data
       end
     end
 
@@ -162,7 +163,7 @@ module FluentPluginKinesis
 
     def get_key(name, record)
       if @random_partition_key
-        SecureRandom.uuid 
+        SecureRandom.uuid
       else
         key = instance_variable_get("@#{name}")
         key_proc = instance_variable_get("@#{name}_proc")
