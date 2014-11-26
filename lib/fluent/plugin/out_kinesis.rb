@@ -24,7 +24,7 @@ module FluentPluginKinesis
     config_param :aws_key_id,    :string,  default: nil
     config_param :aws_sec_key,   :string,  default: nil
     config_param :region,        :string,  default: nil
-    config_param :kinesis_chunk, :integer, default: 37000
+    config_param :kinesis_chunk, :integer, default: 51200
 
     config_param :stream_name,      :string, default: nil
     config_param :random_partition_key, :bool, default: false
@@ -80,16 +80,11 @@ module FluentPluginKinesis
     end
 
     def format(tag, time, record)
-      data = record['message'].to_msgpack
-      return data
+      record['message'].to_msgpack
     end
 
     def package_for_kinesis(arr, stream)
-      random_number = SecureRandom.uuid
-      pre_encode = '[' + arr.join(",") + ']'
-      big_chunk = Base64.strict_encode64(pre_encode)
-      kinesis_to_send = { :data => big_chunk, :partition_key => random_number, :stream_name => stream }
-      return kinesis_to_send
+      { :data => "[#{arr.join(",")}]", :partition_key => SecureRandom.uuid, :stream_name => stream }
     end
 
     def write(chunk)
@@ -110,7 +105,6 @@ module FluentPluginKinesis
       if kinesis_chunks.length > 0
         kinesis_to_send = package_for_kinesis(kinesis_chunks, @stream_name)
         result = @client.put_record(kinesis_to_send)
-        log.info "wrote something", result.data
       end
     end
 
